@@ -17,6 +17,7 @@
 package dagger.hilt.android.processor.internal.androidentrypoint;
 
 import com.squareup.javapoet.ClassName;
+import com.squareup.javapoet.CodeBlock;
 import com.squareup.javapoet.JavaFile;
 import com.squareup.javapoet.MethodSpec;
 import com.squareup.javapoet.ParameterSpec;
@@ -56,9 +57,18 @@ public final class ActivityGenerator {
     Generators.addGeneratedBaseClassJavadoc(builder, AndroidClassNames.ANDROID_ENTRY_POINT);
     Processors.addGeneratedAnnotation(builder, env, getClass());
 
+    if (Processors.isAssignableFrom(
+            metadata.rootMetadata().baseElement(), AndroidClassNames.COMPONENT_ACTIVITY)
+    ) {
+      // For activities that extend a support lib activity, generate code that injects in a
+      // OnContextAvailableListener registered in the constructor.
+      Generators.copyConstructors(
+          metadata.baseElement(), CodeBlock.builder().addStatement("init()").build(), builder);
+      builder.addMethod(init());
+    } else {
       Generators.copyConstructors(metadata.baseElement(), builder);
       builder.addMethod(onCreate());
-
+    }
 
     metadata.baseElement().getTypeParameters().stream()
         .map(TypeVariableName::get)
@@ -77,6 +87,32 @@ public final class ActivityGenerator {
     JavaFile.builder(generatedClassName.packageName(), builder.build())
         .build()
         .writeTo(env.getFiler());
+  }
+
+  // private void init() {
+  //   addOnContextAvailableListener(new OnContextAvailableListener() {
+  //     @Override
+  //     public void onContextAvailable(Context context) {
+  //       inject();
+  //     }
+  //   });
+  // }
+  private MethodSpec init() {
+    return MethodSpec.methodBuilder("init")
+        .addModifiers(Modifier.PRIVATE)
+        .addStatement(
+            "addOnContextAvailableListener($L)",
+            TypeSpec.anonymousClassBuilder("")
+                .addSuperinterface(AndroidClassNames.ON_CONTEXT_AVAILABLE_LISTENER)
+                .addMethod(
+                    MethodSpec.methodBuilder("onContextAvailable")
+                        .addAnnotation(Override.class)
+                        .addModifiers(Modifier.PUBLIC)
+                        .addParameter(AndroidClassNames.CONTEXT, "context")
+                        .addStatement("inject()")
+                        .build())
+                .build())
+        .build();
   }
 
   // @CallSuper
